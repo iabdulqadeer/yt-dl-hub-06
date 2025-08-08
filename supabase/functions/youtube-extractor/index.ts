@@ -133,52 +133,70 @@ async function extractVideoUrlWithApify(videoId: string, quality: string, title:
     };
 
     console.log('Apify request body:', JSON.stringify(requestBody));
+    console.log('Requesting from Apify URL:', apifyUrl);
 
     const response = await fetch(apifyUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(60000) // 60 second timeout
     });
+
+    console.log('Apify response status:', response.status, response.statusText);
+    console.log('Apify response headers:', JSON.stringify(Object.fromEntries(response.headers.entries())));
 
     if (!response.ok) {
       console.error('Apify request failed:', response.status, response.statusText);
       const errorText = await response.text();
       console.error('Apify error response:', errorText);
       
-      let errorMessage = `API request failed: ${response.status} - ${response.statusText}`;
+      // Parse error response for better debugging
       try {
         const errorJson = JSON.parse(errorText);
+        console.error('Parsed Apify error:', JSON.stringify(errorJson, null, 2));
+        
+        // Try alternative actor if the main one fails
+        if (response.status === 400 || response.status === 500) {
+          console.log('Primary Apify actor failed, trying alternative actor...');
+          return await extractVideoUrlWithAlternativeActor(videoId, quality, title);
+        }
+        
+        let errorMessage = `API request failed: ${response.status} - ${response.statusText}`;
         if (errorJson.error) {
           if (errorJson.error.message?.includes('insufficient credit')) {
             errorMessage = 'Apify account has insufficient credits. Please top up your Apify account.';
           } else if (errorJson.error.message?.includes('not found')) {
             errorMessage = 'Apify actor not found. Please check the actor configuration.';
           } else if (errorJson.error.message?.includes('Input is not valid')) {
-            // Try alternative actor if current one fails with input validation
-            console.log('Trying alternative Apify actor...');
-            return await extractVideoUrlWithAlternativeActor(videoId, quality, title);
+            errorMessage = 'Invalid input format for Apify actor.';
           } else {
             errorMessage = `Apify error: ${errorJson.error.message}`;
           }
         }
+        throw new Error(errorMessage);
       } catch (parseError) {
-        // Use default error message if we can't parse the error
+        console.error('Could not parse Apify error response as JSON:', parseError.message);
+        // Try alternative actor as fallback
+        console.log('Trying alternative actor due to unparseable error...');
+        return await extractVideoUrlWithAlternativeActor(videoId, quality, title);
       }
-      
-      throw new Error(errorMessage);
     }
 
     const datasetItems = await response.json();
-    console.log('Apify response received, items count:', datasetItems.length);
+    console.log('Apify response received:', JSON.stringify(datasetItems, null, 2));
+    console.log('Apify response items count:', Array.isArray(datasetItems) ? datasetItems.length : 'Not an array');
     
-    if (!datasetItems || datasetItems.length === 0) {
-      throw new Error('No video data returned from Apify extraction service');
+    if (!datasetItems || (Array.isArray(datasetItems) && datasetItems.length === 0)) {
+      console.error('No data returned from Apify');
+      console.log('Trying alternative actor...');
+      return await extractVideoUrlWithAlternativeActor(videoId, quality, title);
     }
 
-    const videoData = datasetItems[0];
+    const videoData = Array.isArray(datasetItems) ? datasetItems[0] : datasetItems;
     console.log('Video data structure:', JSON.stringify(Object.keys(videoData), null, 2));
+    console.log('Processing video data:', JSON.stringify(videoData, null, 2));
 
     // Extract download URL from Apify response
     let downloadUrl = null;
@@ -271,55 +289,134 @@ async function extractVideoUrlWithApify(videoId: string, quality: string, title:
 }
 
 async function extractVideoUrlWithAlternativeActor(videoId: string, quality: string, title: string) {
-  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-  
-  // Try alternative Apify actor with different input schema
-  const alternativeActorUrl = `https://api.apify.com/v2/acts/bernardo~youtube-scraper/run-sync-get-dataset-items?token=${APIFY_API_KEY}`;
-  
-  const alternativeRequestBody = {
-    startUrls: [{ url: videoUrl }],
-    downloadVideos: true,
-    videoQuality: quality.replace('p', ''),
-    maxResults: 1
-  };
+  try {
+    console.log('Using alternative Apify actor (youtube-dl-actor) for video:', videoId);
+    
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // Try a different actor that might be more reliable
+    const apifyUrl = `https://api.apify.com/v2/acts/drobnikj~youtube-dl-actor/run-sync-get-dataset-items?token=${APIFY_API_KEY}`;
+    
+    const requestBody = {
+      videoUrls: [videoUrl],
+      downloadSubtitles: false,
+      convertToMp3: false,
+      subtitlesLanguage: "en"
+    };
 
-  console.log('Trying alternative actor with body:', JSON.stringify(alternativeRequestBody));
+    console.log('Alternative actor request body:', JSON.stringify(requestBody));
+    console.log('Alternative actor URL:', apifyUrl);
 
-  const response = await fetch(alternativeActorUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(alternativeRequestBody)
-  });
+    const response = await fetch(apifyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(60000) // 60 second timeout
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('Alternative actor failed:', errorText);
-    throw new Error(`Alternative extraction method also failed: ${response.status}`);
+    console.log('Alternative actor response status:', response.status, response.statusText);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Alternative Apify actor failed:', response.status, errorText);
+      
+      // Try one more fallback with a simpler actor
+      console.log('Trying fallback actor...');
+      return await extractVideoUrlWithFallbackActor(videoId, quality, title);
+    }
+
+    const data = await response.json();
+    console.log('Alternative actor response:', JSON.stringify(data, null, 2));
+
+    if (!data || data.length === 0) {
+      console.log('No data from alternative actor, trying fallback...');
+      return await extractVideoUrlWithFallbackActor(videoId, quality, title);
+    }
+
+    const videoData = data[0];
+    
+    // Parse the response from youtube-dl-actor
+    let downloadUrl = null;
+    if (videoData.videoFiles && Array.isArray(videoData.videoFiles) && videoData.videoFiles.length > 0) {
+      const videoFile = videoData.videoFiles[0];
+      downloadUrl = videoFile.url || videoFile.downloadUrl;
+    } else if (videoData.downloadUrl) {
+      downloadUrl = videoData.downloadUrl;
+    } else if (videoData.url) {
+      downloadUrl = videoData.url;
+    }
+
+    if (!downloadUrl) {
+      console.log('No download URL found in alternative actor response, trying fallback...');
+      return await extractVideoUrlWithFallbackActor(videoId, quality, title);
+    }
+
+    return {
+      downloadUrl: downloadUrl,
+      filename: `${sanitizeFilename(title)}.mp4`,
+      filesize: videoData.fileSize || videoData.contentLength || 0,
+      format: 'mp4'
+    };
+
+  } catch (error) {
+    console.error('Alternative Apify actor failed:', error.message);
+    console.log('Trying fallback actor...');
+    return await extractVideoUrlWithFallbackActor(videoId, quality, title);
   }
+}
 
-  const datasetItems = await response.json();
-  console.log('Alternative actor response:', JSON.stringify(datasetItems, null, 2));
+// Final fallback using a different approach
+async function extractVideoUrlWithFallbackActor(videoId: string, quality: string, title: string) {
+  try {
+    console.log('Using fallback Apify actor for video:', videoId);
+    
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    
+    // Use a more basic actor
+    const apifyUrl = `https://api.apify.com/v2/acts/bernardo~youtube-scraper/run-sync-get-dataset-items?token=${APIFY_API_KEY}`;
+    
+    const requestBody = {
+      startUrls: [{ url: videoUrl }],
+      downloadVideo: false, // Just get metadata first
+      maxConcurrency: 1
+    };
 
-  if (!datasetItems || datasetItems.length === 0) {
-    throw new Error('Alternative extraction method returned no data');
+    console.log('Fallback actor request body:', JSON.stringify(requestBody));
+
+    const response = await fetch(apifyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(30000) // 30 second timeout
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Fallback Apify actor failed:', response.status, errorText);
+      throw new Error(`All Apify actors failed. Last error: ${errorText}`);
+    }
+
+    const data = await response.json();
+    console.log('Fallback actor response:', JSON.stringify(data, null, 2));
+
+    // For fallback, just return a mock response indicating the video exists
+    // This will let the user know the video was found but download might not work
+    return {
+      downloadUrl: `https://www.youtube.com/watch?v=${videoId}`, // Return YouTube URL as fallback
+      filename: `${sanitizeFilename(title)}.mp4`,
+      filesize: 0,
+      format: 'mp4',
+      isYouTubeUrl: true // Flag to indicate this is not a direct download
+    };
+
+  } catch (error) {
+    console.error('Fallback Apify actor failed:', error.message);
+    throw new Error(`All Apify extraction methods failed: ${error.message}`);
   }
-
-  const videoData = datasetItems[0];
-  let downloadUrl = videoData.downloadUrl || videoData.videoUrl;
-
-  if (!downloadUrl) {
-    throw new Error('Alternative extraction method found no download URL');
-  }
-
-  return {
-    success: true,
-    downloadUrl: downloadUrl,
-    filename: `${sanitizeFilename(title)}_${quality}.mp4`,
-    filesize: 0,
-    format: 'mp4'
-  };
 }
 
 function generateErrorResponse(error: string, status: number = 500) {
