@@ -124,11 +124,12 @@ async function extractVideoUrlWithApify(videoId: string, quality: string, title:
     const apifyUrl = `https://api.apify.com/v2/acts/streamers~youtube-video-downloader/run-sync-get-dataset-items?token=${APIFY_API_KEY}`;
     
     const requestBody = {
-      videos: [videoUrl], // Changed from videoUrls to videos
-      downloadVideo: true,
-      downloadAudio: false,
-      videoQuality: quality.replace('p', ''), // Convert "720p" to "720"
-      videoFormat: "mp4"
+      videos: [
+        {
+          url: videoUrl
+        }
+      ],
+      format: "mp4"
     };
 
     console.log('Apify request body:', JSON.stringify(requestBody));
@@ -184,54 +185,62 @@ async function extractVideoUrlWithApify(videoId: string, quality: string, title:
     let selectedFormat = null;
     let filesize = 0;
 
-    // Apify typically returns video download links in videoFiles array
-    if (videoData.videoFiles && Array.isArray(videoData.videoFiles)) {
-      console.log('Available video files:', videoData.videoFiles.length);
-      
-      // Find the best matching quality
-      const targetQuality = quality.replace('p', '');
-      let bestMatch = null;
-      
-      // First try to find exact quality match
-      for (const videoFile of videoData.videoFiles) {
-        console.log(`Checking video file: quality=${videoFile.quality}, url=${videoFile.url ? 'present' : 'missing'}`);
+    // Check for direct download URL in response (based on sample format)
+    if (videoData.downloadUrl) {
+      downloadUrl = videoData.downloadUrl;
+      selectedFormat = videoData.format || quality;
+      filesize = videoData.fileSize || 0;
+      console.log(`Found direct download URL: format=${selectedFormat}, size=${filesize}`);
+    }
+    
+    // Fallback: check for other possible response formats
+    if (!downloadUrl) {
+      // Check if response has videoFiles array (alternative format)
+      if (videoData.videoFiles && Array.isArray(videoData.videoFiles)) {
+        console.log('Available video files:', videoData.videoFiles.length);
         
-        if (videoFile.quality && videoFile.quality.includes(targetQuality)) {
-          bestMatch = videoFile;
-          break;
-        }
-      }
-      
-      // If no exact match, find the closest quality
-      if (!bestMatch) {
-        const qualityOrder = ['1080', '720', '480', '360', '240'];
-        for (const q of qualityOrder) {
-          const match = videoData.videoFiles.find(vf => 
-            vf.quality && vf.quality.includes(q) && vf.url
-          );
-          if (match) {
-            bestMatch = match;
+        // Find the best matching quality
+        const targetQuality = quality.replace('p', '');
+        let bestMatch = null;
+        
+        // First try to find exact quality match
+        for (const videoFile of videoData.videoFiles) {
+          console.log(`Checking video file: quality=${videoFile.quality}, url=${videoFile.url ? 'present' : 'missing'}`);
+          
+          if (videoFile.quality && videoFile.quality.includes(targetQuality)) {
+            bestMatch = videoFile;
             break;
           }
         }
+        
+        // If no exact match, find the closest quality
+        if (!bestMatch) {
+          const qualityOrder = ['1080', '720', '480', '360', '240'];
+          for (const q of qualityOrder) {
+            const match = videoData.videoFiles.find(vf => 
+              vf.quality && vf.quality.includes(q) && vf.url
+            );
+            if (match) {
+              bestMatch = match;
+              break;
+            }
+          }
+        }
+        
+        if (bestMatch) {
+          downloadUrl = bestMatch.url;
+          selectedFormat = bestMatch.quality || quality;
+          filesize = bestMatch.contentLength || 0;
+          console.log(`Selected video file: quality=${selectedFormat}, size=${filesize}`);
+        }
       }
       
-      if (bestMatch) {
-        downloadUrl = bestMatch.url;
-        selectedFormat = bestMatch.quality || quality;
-        filesize = bestMatch.contentLength || 0;
-        console.log(`Selected video file: quality=${selectedFormat}, size=${filesize}`);
-      }
-    }
-
-    // Fallback: check for direct download URL properties
-    if (!downloadUrl) {
-      if (videoData.videoUrl) {
-        downloadUrl = videoData.videoUrl;
-        selectedFormat = quality;
-      } else if (videoData.downloadUrl) {
-        downloadUrl = videoData.downloadUrl;
-        selectedFormat = quality;
+      // Other fallback properties
+      if (!downloadUrl) {
+        if (videoData.videoUrl) {
+          downloadUrl = videoData.videoUrl;
+          selectedFormat = quality;
+        }
       }
     }
 
