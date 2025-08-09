@@ -1,5 +1,6 @@
 // YouTube Service - Handles both mock and real YouTube data processing
 import { supabase } from '@/integrations/supabase/client';
+import { io, Socket } from 'socket.io-client';
 
 export interface VideoData {
   id: string;
@@ -38,39 +39,57 @@ export interface DownloadResult {
   filesize?: number;
   isDirectDownload?: boolean;
   format?: string;
+  quality?: string;
   error?: string;
 }
 
-const USE_REAL_API = true; // Set to true when backend is configured
+export interface DownloadedFile {
+  id: string;
+  title: string;
+  filename: string;
+  size: number;
+  createdAt: Date;
+}
 
-// Mock data for demonstration (matching your test URL)
-const getMockVideoData = (url: string): VideoData[] => {
-  // Extract video ID from URL to provide more realistic mock data
-  const videoId = extractVideoId(url);
-  
-  if (url.includes('7wnove7K-ZQ')) {
-    return [{
-      id: '7wnove7K-ZQ',
-      title: 'The video from your URL: Build a Complete YouTube Downloader',
-      thumbnail: 'https://img.youtube.com/vi/7wnove7K-ZQ/maxresdefault.jpg',
-      duration: '12:34',
-      qualities: ['1080p', '720p', '480p', '360p'],
-      uploader: 'Tech Channel',
-      view_count: 125000,
-      upload_date: '2024-01-15'
-    }];
+// API base URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+
+// Socket.io connection
+let socket: Socket | null = null;
+
+export const initializeSocket = () => {
+  if (!socket) {
+    socket = io('http://localhost:3001');
+    
+    socket.on('connect', () => {
+      console.log('Connected to server');
+    });
+    
+    socket.on('disconnect', () => {
+      console.log('Disconnected from server');
+    });
   }
-  
-  return [{
-    id: videoId || 'mock-video',
-    title: 'Sample Video from Your URL',
-    thumbnail: 'https://img.youtube.com/vi/' + (videoId || 'dQw4w9WgXcQ') + '/maxresdefault.jpg',
-    duration: '8:45',
-    qualities: ['1080p', '720p', '480p', '360p'],
-    uploader: 'YouTube Channel',
-    view_count: 50000,
-    upload_date: '2024-01-10'
-  }];
+  return socket;
+};
+
+export const getSocket = () => {
+  return socket || initializeSocket();
+};
+
+// Socket event listeners
+export const onVideoStarted = (callback: (title: string) => void) => {
+  const socket = getSocket();
+  socket.on('VIDEO_STARTED', callback);
+};
+
+export const onVideoDownloaded = (callback: (title: string) => void) => {
+  const socket = getSocket();
+  socket.on('VIDEO_DOWNLOADED', callback);
+};
+
+export const onVideoError = (callback: (error: string) => void) => {
+  const socket = getSocket();
+  socket.on('VIDEO_ERROR', callback);
 };
 
 function extractVideoId(url: string): string | null {
@@ -93,27 +112,45 @@ function extractVideoId(url: string): string | null {
   return null;
 }
 
+function extractPlaylistId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/playlist\?list=)([^&\n?#]+)/,
+    /(?:youtube\.com\/watch\?.*&list=)([^&\n?#]+)/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  
+  return null;
+}
+
 export const processYouTubeUrl = async (url: string): Promise<ProcessResult> => {
   try {
-    if (USE_REAL_API) {
-      // Real API call using Supabase edge function
-      const { data, error } = await supabase.functions.invoke('youtube-processor', {
-        body: { url }
-      });
-      
-      if (error) throw new Error(error.message);
-      return data;
-    } else {
-      // Mock processing for demonstration
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API delay
-      
-      const videos = getMockVideoData(url);
+    // Real API call to our Express server
+    const response = await fetch(`${API_BASE_URL}/youtube/info?url=${encodeURIComponent(url)}`);
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to fetch video information');
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('API Error:', error);
+    
+    // If the server is not running, provide a helpful message
+    if (error.message.includes('Failed to fetch')) {
       return {
-        success: true,
-        videos
+        success: false,
+        error: 'Server is not running. Please start the backend server first.'
       };
     }
-  } catch (error) {
+    
     return {
       success: false,
       error: error.message || 'Failed to process YouTube URL'
@@ -123,31 +160,127 @@ export const processYouTubeUrl = async (url: string): Promise<ProcessResult> => 
 
 export const generateDownloadLink = async (videoId: string, quality: string): Promise<DownloadResult> => {
   try {
-    if (USE_REAL_API) {
-      // Real API call using Supabase edge function
-      const { data, error } = await supabase.functions.invoke('generate-download-link', {
-        body: { videoId, quality }
-      });
-      
-      if (error) throw new Error(error.message);
-      return data;
-    } else {
-      // Mock download link generation
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing
-      
+    // Real API call to our Express server
+    const response = await fetch(`${API_BASE_URL}/youtube/download?videoId=${videoId}&quality=${encodeURIComponent(quality)}`);
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to generate download link');
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Download link generation error:', error);
+    
+    // If the server is not running, provide a helpful message
+    if (error.message.includes('Failed to fetch')) {
       return {
-        success: true,
-        downloadUrl: `https://youtube-download.example.com/v/${videoId}?quality=${quality}&format=mp4`,
-        filename: `video_${videoId}_${quality}.mp4`,
-        isDirectDownload: true,
-        format: 'mp4'
+        success: false,
+        error: 'Server is not running. Please start the backend server first.'
       };
     }
-  } catch (error) {
+    
     return {
       success: false,
       error: error.message || 'Failed to generate download link'
     };
+  }
+};
+
+// New function for direct file download
+export const downloadVideoFile = async (videoId: string, quality: string, title: string): Promise<DownloadResult> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/youtube/download-file`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        videoId,
+        quality,
+        title
+      })
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Failed to start download');
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Download file error:', error);
+    
+    if (error.message.includes('Failed to fetch')) {
+      return {
+        success: false,
+        error: 'Server is not running. Please start the backend server first.'
+      };
+    }
+    
+    return {
+      success: false,
+      error: error.message || 'Failed to start download'
+    };
+  }
+};
+
+// Get all downloaded files
+export const getDownloadedFiles = async (): Promise<DownloadedFile[]> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/downloads`);
+    
+    if (!response.ok) {
+      throw new Error('Failed to fetch downloaded files');
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error fetching downloaded files:', error);
+    return [];
+  }
+};
+
+// Download a specific file
+export const downloadFile = async (filename: string): Promise<void> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/downloads/${filename}/download`);
+    
+    if (!response.ok) {
+      throw new Error('Failed to download file');
+    }
+    
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    throw error;
+  }
+};
+
+// Delete a downloaded file
+export const deleteFile = async (filename: string): Promise<void> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/downloads/${filename}`, {
+      method: 'DELETE'
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to delete file');
+    }
+  } catch (error) {
+    console.error('Error deleting file:', error);
+    throw error;
   }
 };
 

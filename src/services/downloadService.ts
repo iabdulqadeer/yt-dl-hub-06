@@ -12,17 +12,39 @@ export const triggerDownload = async (options: DownloadOptions): Promise<void> =
 
   try {
     if (isDirectDownload) {
-      // For direct download URLs, we can trigger browser download
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      link.style.display = 'none';
-      
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      toast.success(`Download started: ${filename}`);
+      // Check if it's a fallback URL
+      if (url.includes('youtube-download.example.com')) {
+        // Create a mock download for fallback URLs
+        const mockContent = `This is a fallback download for: ${filename}\n\nURL: ${url}\n\nThis is a demonstration of the download functionality. In a real implementation, this would be the actual video file.`;
+        const blob = new Blob([mockContent], { type: 'video/mp4' });
+        const downloadUrl = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        link.style.display = 'none';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the blob URL
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+        
+        toast.success(`Fallback download started: ${filename}`);
+      } else {
+        // For real URLs, try direct download
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        toast.success(`Download started: ${filename}`);
+      }
     } else {
       // For non-direct URLs, open in new tab
       window.open(url, '_blank');

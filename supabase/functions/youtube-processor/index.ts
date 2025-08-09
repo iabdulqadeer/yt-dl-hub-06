@@ -1,11 +1,23 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+// This file runs in Deno environment, not Node.js
+// @ts-ignore -- Deno environment
+import { serve } from "https://deno.land/std@0.208.0/http/server.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// @ts-ignore -- Deno environment
 const YOUTUBE_API_KEY = Deno.env.get('YOUTUBE_API_KEY')
+
+// Debug: Check if API key is available
+console.log('YouTube API Key available:', !!YOUTUBE_API_KEY)
+console.log('YouTube API Key length:', YOUTUBE_API_KEY?.length || 0)
+console.log('Environment variables check:')
+// @ts-ignore -- Deno environment
+console.log('- YOUTUBE_API_KEY exists:', !!Deno.env.get('YOUTUBE_API_KEY'))
+// @ts-ignore -- Deno environment
+console.log('- APIFY_API_KEY exists:', !!Deno.env.get('APIFY_API_KEY'))
 
 interface VideoInfo {
   id: string;

@@ -1,12 +1,15 @@
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+// @ts-ignore -- Deno environment
+import { serve } from "https://deno.land/std@0.208.0/http/server.ts"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// @ts-ignore -- Deno environment
 const YOUTUBE_API_KEY = Deno.env.get('YOUTUBE_API_KEY')
+// @ts-ignore -- Deno environment
 const APIFY_API_KEY = Deno.env.get('APIFY_API_KEY')
 
 interface VideoFormat {
@@ -198,10 +201,10 @@ async function extractVideoUrlWithApify(videoId: string, quality: string, title:
     console.log('Video data structure:', JSON.stringify(Object.keys(videoData), null, 2));
     console.log('Processing video data:', JSON.stringify(videoData, null, 2));
 
-    // Extract download URL from Apify response
-    let downloadUrl = null;
-    let selectedFormat = null;
-    let filesize = 0;
+         // Extract download URL from Apify response
+     let downloadUrl: string | null = null;
+     let selectedFormat: string | null = null;
+     let filesize = 0;
 
     // Check for direct download URL in response (based on sample format)
     if (videoData.downloadUrl) {
@@ -217,9 +220,9 @@ async function extractVideoUrlWithApify(videoId: string, quality: string, title:
       if (videoData.videoFiles && Array.isArray(videoData.videoFiles)) {
         console.log('Available video files:', videoData.videoFiles.length);
         
-        // Find the best matching quality
-        const targetQuality = quality.replace('p', '');
-        let bestMatch = null;
+                 // Find the best matching quality
+         const targetQuality = quality.replace('p', '');
+         let bestMatch: any = null;
         
         // First try to find exact quality match
         for (const videoFile of videoData.videoFiles) {
@@ -231,19 +234,19 @@ async function extractVideoUrlWithApify(videoId: string, quality: string, title:
           }
         }
         
-        // If no exact match, find the closest quality
-        if (!bestMatch) {
-          const qualityOrder = ['1080', '720', '480', '360', '240'];
-          for (const q of qualityOrder) {
-            const match = videoData.videoFiles.find(vf => 
-              vf.quality && vf.quality.includes(q) && vf.url
-            );
-            if (match) {
-              bestMatch = match;
-              break;
-            }
-          }
-        }
+                 // If no exact match, find the closest quality
+         if (!bestMatch) {
+           const qualityOrder = ['1080', '720', '480', '360', '240'];
+           for (const q of qualityOrder) {
+             const match = videoData.videoFiles.find((vf: any) => 
+               vf.quality && vf.quality.includes(q) && vf.url
+             );
+             if (match) {
+               bestMatch = match;
+               break;
+             }
+           }
+         }
         
         if (bestMatch) {
           downloadUrl = bestMatch.url;
